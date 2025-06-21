@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: coffee-order-postgres
+    environment:
+      POSTGRES_DB: coffee_order
+      POSTGRES_USER: coffee_user
+      POSTGRES_PASSWORD: coffee_password
+    ports:
+      - '5434:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - coffee-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: coffee-order-redis
+    ports:
+      - '6380:6379'
+    volumes:
+      - redis_data:/data
+    networks:
+      - coffee-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  coffee-network:
+    driver: bridge
