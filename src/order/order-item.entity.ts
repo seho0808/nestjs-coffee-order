@@ -32,7 +32,7 @@ export class OrderItem {
   @JoinColumn({ name: 'order_id' })
   order: Order;
 
-  @ManyToOne(() => Menu, (menu) => menu.orderItems)
+  @ManyToOne(() => Menu)
   @JoinColumn({ name: 'menu_id' })
   menu: Menu;
 }
