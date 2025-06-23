@@ -8,6 +8,7 @@ import { MenuModule } from './menu/menu.module';
 import { PaymentModule } from './payment/payment.module';
 import { OrderModule } from './order/order.module';
 import { UserModule } from './user/user.module';
+import { UserService } from './user/user.service';
 import databaseConfig from './config/database.config';
 import redisConfig from './config/redis.config';
 
@@ -30,6 +31,6 @@ import redisConfig from './config/redis.config';
     PaymentModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, UserService],
 })
 export class AppModule {}
