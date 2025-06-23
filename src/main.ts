@@ -21,6 +21,7 @@ async function bootstrap() {
     .setDescription('Coffee Order System API Documentation')
     .setVersion('1.0')
     .addTag('coffee-order')
+    .addBearerAuth()
     .build();
 
   const document = SwaggerModule.createDocument(app as any, config);
