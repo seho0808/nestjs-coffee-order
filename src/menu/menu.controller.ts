@@ -1,4 +1,11 @@
-import { Controller, Get, Param, NotFoundException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  NotFoundException,
+  HttpStatus,
+  HttpCode,
+} from '@nestjs/common';
 import { MenuService } from './menu.service';
 import { MenuResponseDto, PopularMenuResponseDto } from './dto';
 import { ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
@@ -13,6 +20,7 @@ export class MenuController {
     description: '모든 메뉴 조회 성공',
     type: [MenuResponseDto],
   })
+  @HttpCode(HttpStatus.OK)
   @Get()
   async getAllMenus(): Promise<MenuResponseDto[]> {
     return this.menuService.getAllMenus();
@@ -27,6 +35,7 @@ export class MenuController {
     description: '인기 메뉴 조회 성공',
     type: [PopularMenuResponseDto],
   })
+  @HttpCode(HttpStatus.OK)
   @Get('popular')
   async getPopularMenus(): Promise<PopularMenuResponseDto> {
     return this.menuService.getPopularMenus();
@@ -43,6 +52,7 @@ export class MenuController {
     description: '메뉴 상세 조회 성공',
     type: MenuResponseDto,
   })
+  @HttpCode(HttpStatus.OK)
   @Get(':id')
   async getMenuById(@Param('id') id: string): Promise<MenuResponseDto> {
     try {
