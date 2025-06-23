@@ -85,7 +85,8 @@
     ],
     "rootDir": ".",
     "testRegex": [
-      ".e2e-spec.ts$"
+      ".e2e-spec.ts$",
+      ".integration.spec.ts$"
     ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
