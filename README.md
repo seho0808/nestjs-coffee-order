@@ -3,7 +3,7 @@
 - `docs/tech-spec.md`: 테크 스펙 문서
 - `docs/conventions.md`: 컨벤션, 프로젝트 철학 문서
 
-빠르게 구경하기
+### 빠르게 구경하기
 
 1. Swagger로 명세보기
 
