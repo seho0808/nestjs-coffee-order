@@ -11,6 +11,8 @@ import { UserModule } from './user/user.module';
 import { UserService } from './user/user.service';
 import databaseConfig from './config/database.config';
 import redisConfig from './config/redis.config';
+import { addTransactionalDataSource } from 'typeorm-transactional';
+import { DataSource } from 'typeorm';
 
 @Module({
   imports: [
@@ -23,6 +25,12 @@ import redisConfig from './config/redis.config';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) =>
         configService.get('database')!,
+      dataSourceFactory: async (options) => {
+        if (!options) {
+          throw new Error('Invalid options passed');
+        }
+        return addTransactionalDataSource(new DataSource(options));
+      },
     }),
     UserModule,
     AuthModule,
