@@ -5,6 +5,7 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { User } from '../user/user.entity';
 
@@ -14,6 +15,7 @@ export enum PointTransactionType {
 }
 
 @Entity('point_transactions')
+@Index(['userId', 'idempotencyKey'], { unique: true })
 export class PointTransaction {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -29,6 +31,9 @@ export class PointTransaction {
     enum: PointTransactionType,
   })
   type: PointTransactionType;
+
+  @Column({ name: 'idempotency_key', type: 'varchar', length: 255 })
+  idempotencyKey: string;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

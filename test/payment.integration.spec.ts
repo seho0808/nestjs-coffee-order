@@ -18,6 +18,7 @@ import {
   initializeTransactionalContext,
   addTransactionalDataSource,
 } from 'typeorm-transactional';
+import { v4 as uuidv4 } from 'uuid';
 
 describe('PaymentService (통합 테스트)', () => {
   let app: INestApplication;
@@ -124,6 +125,7 @@ describe('PaymentService (통합 테스트)', () => {
       const transaction = await paymentService.chargePoints(
         testUser.id,
         chargeAmount,
+        uuidv4(),
       );
 
       // 트랜잭션 세부사항 확인
@@ -539,6 +541,153 @@ describe('PaymentService (통합 테스트)', () => {
 
       expect(transactions).toHaveLength(0);
       expect(Array.isArray(transactions)).toBe(true);
+    });
+  });
+
+  describe('idempotency 기능 테스트', () => {
+    it('동일한 idempotency key로 충전 요청 시 중복 처리되지 않아야 함', async () => {
+      const chargeAmount = 500;
+      const idempotencyKey = uuidv4();
+      const initialPoints = testUser.point;
+
+      // 동일한 idempotency key로 두 번 요청
+      const transaction1 = await paymentService.chargePoints(
+        testUser.id,
+        chargeAmount,
+        idempotencyKey,
+      );
+      const transaction2 = await paymentService.chargePoints(
+        testUser.id,
+        chargeAmount,
+        idempotencyKey,
+      );
+
+      // 두 번째 요청은 첫 번째와 동일한 트랜잭션을 반환해야 함
+      expect(transaction1.id).toBe(transaction2.id);
+      expect(transaction1.amount).toBe(chargeAmount);
+      expect(transaction1.type).toBe(PointTransactionType.ADD);
+
+      // 사용자 포인트는 한 번만 증가해야 함
+      const updatedUser = await userRepository.findOne({
+        where: { id: testUser.id },
+      });
+      expect(updatedUser?.point).toBe(initialPoints + chargeAmount);
+
+      // 데이터베이스에는 하나의 트랜잭션만 저장되어야 함
+      const savedTransactions = await pointTransactionRepository.find({
+        where: { userId: testUser.id, idempotencyKey },
+      });
+      expect(savedTransactions).toHaveLength(1);
+    });
+
+    it('동일한 idempotency key로 차감 요청 시 중복 처리되지 않아야 함', async () => {
+      const deductAmount = 300;
+      const idempotencyKey = uuidv4();
+      const initialPoints = testUser.point;
+
+      // 동일한 idempotency key로 두 번 요청
+      const transaction1 = await paymentService.deductPoints(
+        testUser.id,
+        deductAmount,
+        idempotencyKey,
+      );
+      const transaction2 = await paymentService.deductPoints(
+        testUser.id,
+        deductAmount,
+        idempotencyKey,
+      );
+
+      // 두 번째 요청은 첫 번째와 동일한 트랜잭션을 반환해야 함
+      expect(transaction1.id).toBe(transaction2.id);
+      expect(transaction1.amount).toBe(deductAmount);
+      expect(transaction1.type).toBe(PointTransactionType.DEDUCT);
+
+      // 사용자 포인트는 한 번만 차감되어야 함
+      const updatedUser = await userRepository.findOne({
+        where: { id: testUser.id },
+      });
+      expect(updatedUser?.point).toBe(initialPoints - deductAmount);
+
+      // 데이터베이스에는 하나의 트랜잭션만 저장되어야 함
+      const savedTransactions = await pointTransactionRepository.find({
+        where: { userId: testUser.id, idempotencyKey },
+      });
+      expect(savedTransactions).toHaveLength(1);
+    });
+
+    it('다른 idempotency key로 요청 시 별도 트랜잭션이 생성되어야 함', async () => {
+      const chargeAmount = 200;
+      const idempotencyKey1 = uuidv4();
+      const idempotencyKey2 = uuidv4();
+      const initialPoints = testUser.point;
+
+      // 다른 idempotency key로 두 번 요청
+      const transaction1 = await paymentService.chargePoints(
+        testUser.id,
+        chargeAmount,
+        idempotencyKey1,
+      );
+      const transaction2 = await paymentService.chargePoints(
+        testUser.id,
+        chargeAmount,
+        idempotencyKey2,
+      );
+
+      // 서로 다른 트랜잭션이어야 함
+      expect(transaction1.id).not.toBe(transaction2.id);
+      expect(transaction1.idempotencyKey).toBe(idempotencyKey1);
+      expect(transaction2.idempotencyKey).toBe(idempotencyKey2);
+
+      // 사용자 포인트는 두 번 증가해야 함
+      const updatedUser = await userRepository.findOne({
+        where: { id: testUser.id },
+      });
+      expect(updatedUser?.point).toBe(initialPoints + chargeAmount * 2);
+
+      // 데이터베이스에는 두 개의 트랜잭션이 저장되어야 함
+      const savedTransactions = await pointTransactionRepository.find({
+        where: { userId: testUser.id },
+      });
+      expect(savedTransactions).toHaveLength(2);
+    });
+
+    it('동시에 동일한 idempotency key로 요청해도 중복 처리되지 않아야 함', async () => {
+      const chargeAmount = 100;
+      const idempotencyKey = uuidv4();
+      const initialPoints = testUser.point;
+      const concurrentRequests = 5;
+
+      // 동일한 idempotency key로 동시 요청
+      const promises = Array(concurrentRequests)
+        .fill(null)
+        .map(() =>
+          paymentService.chargePoints(
+            testUser.id,
+            chargeAmount,
+            idempotencyKey,
+          ),
+        );
+
+      const results = await Promise.all(promises);
+
+      // 모든 결과가 동일한 트랜잭션이어야 함
+      const firstTransactionId = results[0].id;
+      results.forEach((result) => {
+        expect(result.id).toBe(firstTransactionId);
+        expect(result.idempotencyKey).toBe(idempotencyKey);
+      });
+
+      // 사용자 포인트는 한 번만 증가해야 함
+      const updatedUser = await userRepository.findOne({
+        where: { id: testUser.id },
+      });
+      expect(updatedUser?.point).toBe(initialPoints + chargeAmount);
+
+      // 데이터베이스에는 하나의 트랜잭션만 저장되어야 함
+      const savedTransactions = await pointTransactionRepository.find({
+        where: { userId: testUser.id, idempotencyKey },
+      });
+      expect(savedTransactions).toHaveLength(1);
     });
   });
 });

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../user/user.entity';
@@ -8,6 +12,7 @@ import {
 } from './point-transaction.entity';
 import { isValidUuid } from 'src/common/utils/uuid';
 import { Transactional } from 'typeorm-transactional';
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class PaymentService {
@@ -22,9 +27,27 @@ export class PaymentService {
   async chargePoints(
     userId: string,
     amount: number,
+    idempotencyKey?: string,
   ): Promise<PointTransaction> {
     if (!isValidUuid(userId)) {
       throw new NotFoundException('User not found');
+    }
+
+    // idempotency key가 없으면 자동 생성
+    const finalIdempotencyKey = idempotencyKey || uuidv4();
+
+    // 동일한 idempotency key로 이미 처리된 트랜잭션이 있는지 확인
+    const existingTransaction = await this.pointTransactionRepository.findOne({
+      where: {
+        userId,
+        idempotencyKey: finalIdempotencyKey,
+        type: PointTransactionType.ADD,
+      },
+    });
+
+    if (existingTransaction) {
+      // 이미 처리된 요청이므로 기존 트랜잭션 반환
+      return existingTransaction;
     }
 
     // 비관적 락으로 사용자 조회 - 동시성 제어
@@ -48,21 +71,58 @@ export class PaymentService {
       userId,
       amount,
       type: PointTransactionType.ADD,
+      idempotencyKey: finalIdempotencyKey,
     });
 
-    await this.pointTransactionRepository.save(pointTransaction);
-
-    return pointTransaction;
+    try {
+      await this.pointTransactionRepository.save(pointTransaction);
+      return pointTransaction;
+    } catch (error) {
+      // 유니크 제약 조건 위반 (동시 요청으로 인한 중복 키)
+      if (error.code === '23505') {
+        // PostgreSQL unique violation
+        const existingTransaction =
+          await this.pointTransactionRepository.findOne({
+            where: {
+              userId,
+              idempotencyKey: finalIdempotencyKey,
+              type: PointTransactionType.ADD,
+            },
+          });
+        if (existingTransaction) {
+          return existingTransaction;
+        }
+      }
+      throw error;
+    }
   }
 
   @Transactional()
   async deductPoints(
     userId: string,
     amount: number,
+    idempotencyKey?: string,
   ): Promise<PointTransaction> {
     // UUID 형식 검증
     if (!isValidUuid(userId)) {
       throw new NotFoundException('User not found');
+    }
+
+    // idempotency key가 없으면 자동 생성
+    const finalIdempotencyKey = idempotencyKey || uuidv4();
+
+    // 동일한 idempotency key로 이미 처리된 트랜잭션이 있는지 확인
+    const existingTransaction = await this.pointTransactionRepository.findOne({
+      where: {
+        userId,
+        idempotencyKey: finalIdempotencyKey,
+        type: PointTransactionType.DEDUCT,
+      },
+    });
+
+    if (existingTransaction) {
+      // 이미 처리된 요청이므로 기존 트랜잭션 반환
+      return existingTransaction;
     }
 
     // 비관적 락으로 사용자 조회 - 동시성 제어
@@ -91,11 +151,30 @@ export class PaymentService {
       userId,
       amount,
       type: PointTransactionType.DEDUCT,
+      idempotencyKey: finalIdempotencyKey,
     });
 
-    await this.pointTransactionRepository.save(pointTransaction);
-
-    return pointTransaction;
+    try {
+      await this.pointTransactionRepository.save(pointTransaction);
+      return pointTransaction;
+    } catch (error) {
+      // 유니크 제약 조건 위반 (동시 요청으로 인한 중복 키)
+      if (error.code === '23505') {
+        // PostgreSQL unique violation
+        const existingTransaction =
+          await this.pointTransactionRepository.findOne({
+            where: {
+              userId,
+              idempotencyKey: finalIdempotencyKey,
+              type: PointTransactionType.DEDUCT,
+            },
+          });
+        if (existingTransaction) {
+          return existingTransaction;
+        }
+      }
+      throw error;
+    }
   }
 
   /**
