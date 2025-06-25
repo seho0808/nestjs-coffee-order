@@ -1,8 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../user/user.entity';
@@ -23,7 +19,6 @@ export class PaymentService {
     private readonly pointTransactionRepository: Repository<PointTransaction>,
   ) {}
 
-  @Transactional()
   async chargePoints(
     userId: string,
     amount: number,
@@ -36,68 +31,27 @@ export class PaymentService {
     // idempotency key가 없으면 자동 생성
     const finalIdempotencyKey = idempotencyKey || uuidv4();
 
-    // 동일한 idempotency key로 이미 처리된 트랜잭션이 있는지 확인
-    const existingTransaction = await this.pointTransactionRepository.findOne({
-      where: {
-        userId,
-        idempotencyKey: finalIdempotencyKey,
-        type: PointTransactionType.ADD,
-      },
-    });
-
-    if (existingTransaction) {
-      // 이미 처리된 요청이므로 기존 트랜잭션 반환
-      return existingTransaction;
-    }
-
-    // 비관적 락으로 사용자 조회 - 동시성 제어
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-      lock: { mode: 'pessimistic_write' },
-    });
-
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    // 포인트 업데이트
-    user.point += amount;
-
-    // 먼저 사용자 포인트를 업데이트하고 저장
-    await this.userRepository.save(user);
-
-    // 그 다음 트랜잭션 기록 생성 및 저장
-    const pointTransaction = this.pointTransactionRepository.create({
+    const res = await this.executeChargeTransaction(
       userId,
       amount,
-      type: PointTransactionType.ADD,
-      idempotencyKey: finalIdempotencyKey,
-    });
+      finalIdempotencyKey,
+    );
 
-    try {
-      await this.pointTransactionRepository.save(pointTransaction);
-      return pointTransaction;
-    } catch (error) {
-      // 유니크 제약 조건 위반 (동시 요청으로 인한 중복 키)
-      if (error.code === '23505') {
-        // PostgreSQL unique violation
-        const existingTransaction =
-          await this.pointTransactionRepository.findOne({
-            where: {
-              userId,
-              idempotencyKey: finalIdempotencyKey,
-              type: PointTransactionType.ADD,
-            },
-          });
-        if (existingTransaction) {
-          return existingTransaction;
-        }
-      }
-      throw error;
+    if (res) return res;
+
+    const existingTx = await this.findExistingTransaction(
+      userId,
+      finalIdempotencyKey,
+      PointTransactionType.ADD,
+    );
+
+    if (!existingTx) {
+      throw new Error('Failed to create transaction');
     }
+
+    return existingTx;
   }
 
-  @Transactional()
   async deductPoints(
     userId: string,
     amount: number,
@@ -111,21 +65,106 @@ export class PaymentService {
     // idempotency key가 없으면 자동 생성
     const finalIdempotencyKey = idempotencyKey || uuidv4();
 
-    // 동일한 idempotency key로 이미 처리된 트랜잭션이 있는지 확인
+    const res = await this.executeDeductTransaction(
+      userId,
+      amount,
+      finalIdempotencyKey,
+    );
+
+    if (res) return res;
+
+    const existingTx = await this.findExistingTransaction(
+      userId,
+      finalIdempotencyKey,
+      PointTransactionType.DEDUCT,
+    );
+
+    if (!existingTx) {
+      throw new Error('Failed to create transaction');
+    }
+
+    return existingTx;
+  }
+
+  /**
+   * 포인트 충전 트랜잭션 실행
+   */
+  @Transactional()
+  private async executeChargeTransaction(
+    userId: string,
+    amount: number,
+    idempotencyKey: string,
+  ): Promise<PointTransaction | null> {
+    // 트랜잭션 내에서 한 번 더 확인 (동시성 방지)
     const existingTransaction = await this.pointTransactionRepository.findOne({
       where: {
         userId,
-        idempotencyKey: finalIdempotencyKey,
+        idempotencyKey,
+        type: PointTransactionType.ADD,
+      },
+    });
+
+    if (existingTransaction) {
+      return existingTransaction;
+    }
+
+    // 비관적 락으로 사용자 조회
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      lock: { mode: 'pessimistic_write' },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // 포인트 업데이트
+    user.point += amount;
+    await this.userRepository.save(user);
+
+    // 트랜잭션 기록 생성
+    const pointTransaction = this.pointTransactionRepository.create({
+      userId,
+      amount,
+      type: PointTransactionType.ADD,
+      idempotencyKey,
+    });
+
+    try {
+      return await this.pointTransactionRepository.save(pointTransaction);
+    } catch (error) {
+      // 유니크 제약 조건 위반 시 기존 트랜잭션 조회하여 반환
+      if (error.code === '23505') {
+        // 새로운 트랜잭션에서 기존 레코드 조회
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 포인트 차감 트랜잭션 실행
+   */
+  @Transactional()
+  private async executeDeductTransaction(
+    userId: string,
+    amount: number,
+    idempotencyKey: string,
+  ): Promise<PointTransaction> {
+    // 트랜잭션 내에서 한 번 더 확인 (동시성 방지)
+    const existingTransaction = await this.pointTransactionRepository.findOne({
+      where: {
+        userId,
+        idempotencyKey,
         type: PointTransactionType.DEDUCT,
       },
     });
 
     if (existingTransaction) {
-      // 이미 처리된 요청이므로 기존 트랜잭션 반환
       return existingTransaction;
     }
 
-    // 비관적 락으로 사용자 조회 - 동시성 제어
+    // 비관적 락으로 사용자 조회
     const user = await this.userRepository.findOne({
       where: { id: userId },
       lock: { mode: 'pessimistic_write' },
@@ -142,35 +181,29 @@ export class PaymentService {
 
     // 포인트 차감
     user.point -= amount;
-
-    // 먼저 사용자 포인트를 업데이트하고 저장
     await this.userRepository.save(user);
 
-    // 그 다음 트랜잭션 기록 생성 및 저장
+    // 트랜잭션 기록 생성
     const pointTransaction = this.pointTransactionRepository.create({
       userId,
       amount,
       type: PointTransactionType.DEDUCT,
-      idempotencyKey: finalIdempotencyKey,
+      idempotencyKey,
     });
 
     try {
-      await this.pointTransactionRepository.save(pointTransaction);
-      return pointTransaction;
+      return await this.pointTransactionRepository.save(pointTransaction);
     } catch (error) {
-      // 유니크 제약 조건 위반 (동시 요청으로 인한 중복 키)
+      // 유니크 제약 조건 위반 시 기존 트랜잭션 조회하여 반환
       if (error.code === '23505') {
-        // PostgreSQL unique violation
-        const existingTransaction =
-          await this.pointTransactionRepository.findOne({
-            where: {
-              userId,
-              idempotencyKey: finalIdempotencyKey,
-              type: PointTransactionType.DEDUCT,
-            },
-          });
-        if (existingTransaction) {
-          return existingTransaction;
+        // 새로운 트랜잭션에서 기존 레코드 조회
+        const existingTx = await this.findExistingTransaction(
+          userId,
+          idempotencyKey,
+          PointTransactionType.DEDUCT,
+        );
+        if (existingTx) {
+          return existingTx;
         }
       }
       throw error;
@@ -208,6 +241,19 @@ export class PaymentService {
     return this.pointTransactionRepository.find({
       where: { userId },
       order: { createdAt: 'DESC' },
+    });
+  }
+
+  /**
+   * 기존 트랜잭션 조회
+   */
+  private async findExistingTransaction(
+    userId: string,
+    idempotencyKey: string,
+    type: PointTransactionType,
+  ): Promise<PointTransaction | null> {
+    return this.pointTransactionRepository.findOne({
+      where: { userId, idempotencyKey, type },
     });
   }
 }
