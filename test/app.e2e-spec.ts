@@ -3,11 +3,16 @@ import { INestApplication } from '@nestjs/common';
 import * as request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
+import {
+  addTransactionalDataSource,
+  initializeTransactionalContext,
+} from 'typeorm-transactional';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
 
   beforeEach(async () => {
+    initializeTransactionalContext();
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
