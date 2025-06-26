@@ -10,6 +10,7 @@
 ```shell
 ## git clone 후
 pnpm i
+pnpm run docker:up
 pnpm start:dev
 ## http://localhost:3000/api 접속
 ```
@@ -17,5 +18,6 @@ pnpm start:dev
 2. 테스팅해보기
 
 ```shell
+pnpm run docker:up
 pnpm test --coverage
 ```
